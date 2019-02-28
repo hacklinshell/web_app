@@ -25,20 +25,19 @@ async def create_pool(loop, **kw):
     )
 
 
-# select
 async def select(sql, args, size=None):
     log(sql, args)
     global __pool
-    with (await __pool) as conn:
-         # 创建一个字典游标  await 直接调用一个子协程 并且返回结果 cur
-        with (await conn.cursor(aiomysql.DictCursor)) as cur:
+    async with __pool.get() as conn:
+        ''' 创建一个字典游标  await 直接调用一个子协程 并且返回结果 cur'''
+        async with (await conn.cursor(aiomysql.DictCursor)) as cur:
             # 执行sql语句     SQL 语句的占位符是? mysql的占位符是%s   进行替换
-            await cur.execute(sql.replace('?', '%s'), args or())
+            await cur.execute(sql.replace('?', '%s'), args or ())
             if size:
                 rs = await cur.fetchmany(size)  # 最多指定size数量的记录
             else:
-                rs = await cur.fetchall()  # 返回查询集的所有结果
-            logging.info('rows returnd : %s' % len(rs))
+                rs = await cur.fetchall()   # 返回查询集的所有结果
+            logging.info('rows returned: %s' % len(rs))
             return rs
 
 
@@ -48,19 +47,19 @@ async def select(sql, args, size=None):
 # 以及返回一个整数表示影响的行数   没用的行号数
 async def execute(sql, args):
     log(sql)
-    with (await __pool) as conn:
+    async with __pool.get() as conn:
         try:
-            with (await conn.cursor()) as cur:
+            async with (await conn.cursor(aiomysql.DictCursor)) as cur:
                 # execute类型的sql返回结果只有行号
-                await cur.execute(sql.replace('?', '%s'), args)
+                await cur.execute(sql.replace('?', '%s'), args or ())
                 affected = cur.rowcount  # 返回结果数
         except BaseException as e:
             raise
         return affected
 
+
+
 # 定义Field 类 负责保存表(数据库)的字段名和字段类型
-
-
 class Field(object):
     # 表的字段包含  域名，类型，是否位主键和默认值
     def __init__(self, name, column_type, primary_key, default):
@@ -75,7 +74,7 @@ class Field(object):
 
 
 # 定义数据库中五个存储类型
-# 字符串类型的域
+# 字符串类型的域    varchar 可变字长
 class StringField(Field):
 
     def __init__(self, name=None, primary_key=False, default=None, ddl='varchar(100)'):
@@ -281,30 +280,30 @@ class Model(dict, metaclass=ModelMetaclass):
     @classmethod
     async def find(cls, pk):
         ' find object by primary key. '
-        rs = await select('%s where `%s`=?' % (cls.__select__,cls.__primary_key__),[pk],1)
+        rs = await select('%s where `%s`=?' % (cls.__select__, cls.__primary_key__), [pk], 1)
         if len(rs) == 0:
             return None
         return cls(**rs[0])
 
     # 增加Model类的实例方法，所有子类都可以调用实例方法
     async def save(self):
-        args = list(map(self.getValueOrDefault,self.__fields__))
+        args = list(map(self.getValueOrDefault, self.__fields__))
         args.append(self.getValueOrDefault(self.__primary_key__))
-        rows = await execute(self.__insert__,args)
+        rows = await execute(self.__insert__, args)
         if rows != 1:
             logging.warning('failed to insert record: affectd rows: %s' % rows)
 
     async def update(self):
-        args = list(map(self.getValue,self.__fields__))
+        args = list(map(self.getValue, self.__fields__))
         args.append(self.getValue(self.__primary_key__))
-        rows = await execute(self.__update__,args)
-        if rows !=1:
-            logging.warning('failed to update by primary key : affectd rows ：%s' % rows)
+        rows = await execute(self.__update__, args)
+        if rows != 1:
+            logging.warning(
+                'failed to update by primary key : affectd rows ：%s' % rows)
 
     async def remove(self):
         args = [self.getValue(self.__primary_key__)]
-        rows = await execute(self.__delet__,args)
-        if rows !=1:
-            logging.warning('failed to remove by primary key : affectd rows : %s' % rows)
-
- 
+        rows = await execute(self.__delet__, args)
+        if rows != 1:
+            logging.warning(
+                'failed to remove by primary key : affectd rows : %s' % rows)
